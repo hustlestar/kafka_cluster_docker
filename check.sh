@@ -3,6 +3,8 @@
 ZOO=zookeeper
 KAFKA=kafka
 
+sh run.sh
+
 docker-compose ps
 
 
@@ -40,3 +42,4 @@ docker-compose exec kafka  \
 docker-compose exec kafka  \
   kafka-console-consumer --bootstrap-server $KAFKA:9092 --topic foo --from-beginning --max-messages 42
 
+docker-compose down
