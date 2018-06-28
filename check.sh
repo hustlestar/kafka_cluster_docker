@@ -87,16 +87,61 @@ bash -c 'kafka-console-consumer --consumer-property group.id=qs-consumer --consu
 sleep 1;
 echo $DELIM
 
-#echo "KAFKA-CONNECT"
-#echo "create topic"
-#K_OFF=quickstart-offsets
-#K_DATA=quickstart-data
-#
-#docker-compose exec kafka \
-#kafka-topics --create --topic $K_OFF --partitions 1 --replication-factor 1 --if-not-exists --zookeeper $ZOO:2181
-#
-#docker-compose exec kafka \
-#  kafka-topics --create --topic $K_DATA --partitions 1 --replication-factor 1 --if-not-exists --zookeeper $ZOO:2181
-#
+echo "KAFKA-CONNECT"
+K_OFF=quickstart-offsets
+K_DATA=quickstart-data
 
-#docker-compose down
+echo "create topic $K_OFF"
+docker-compose exec kafka \
+kafka-topics --create --topic $K_OFF --partitions 1 --replication-factor 1 --if-not-exists --zookeeper $ZOO:2181
+echo $DELIM
+
+echo "create topic $K_DATA"
+docker-compose exec kafka \
+  kafka-topics --create --topic $K_DATA --partitions 1 --replication-factor 1 --if-not-exists --zookeeper $ZOO:2181
+echo $DELIM
+
+echo "check topics are created"
+docker-compose exec kafka \
+   kafka-topics --describe --zookeeper $ZOO:2181
+echo $DELIM
+
+echo "creating input file"
+
+docker-compose exec kafka-connect mkdir -p /tmp/quickstart/file
+docker-compose exec kafka-connect bash -c 'seq 1000 > /tmp/quickstart/file/input.txt'
+echo $DELIM
+
+echo "creating file source connector"
+docker-compose exec kafka-connect curl -s -X POST \
+  -H "Content-Type: application/json" \
+  --data '{"name": "quickstart-file-source", "config": {"connector.class":"org.apache.kafka.connect.file.FileStreamSourceConnector", "tasks.max":"1", "topic":"quickstart-data", "file": "/tmp/quickstart/file/input.txt"}}' \
+  http://kafka-connect:8083/connectors
+echo $DELIM
+
+echo "check kafka connect file source status"
+docker-compose exec kafka-connect curl -s -X GET http://kafka-connect:8083/connectors/quickstart-file-source/status
+echo $DELIM
+
+echo "read 10 messages from file source"
+docker-compose exec kafka \
+kafka-console-consumer --bootstrap-server $KAFKA:9092 --topic $K_DATA --from-beginning --max-messages 10
+echo $DELIM
+
+echo "write to file sink"
+docker-compose exec kafka-connect curl -X POST -H "Content-Type: application/json" \
+    --data '{"name": "quickstart-file-sink", "config": {"connector.class":"org.apache.kafka.connect.file.FileStreamSinkConnector", "tasks.max":"1", "topics":"quickstart-data", "file": "/tmp/quickstart/file/output.txt"}}' \
+    http://kafka-connect:8083/connectors
+echo $DELIM
+
+echo "check state of file sink"
+docker-compose exec kafka-connect curl -s -X GET http://kafka-connect:8083/connectors/quickstart-file-sink/status
+echo $DELIM
+
+sleep 10s;
+
+echo "check it wrote to file system"
+docker-compose exec kafka-connect cat /tmp/quickstart/file/output.txt
+echo $DELIM
+
+docker-compose down
