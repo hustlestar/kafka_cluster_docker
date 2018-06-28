@@ -2,44 +2,101 @@
 
 ZOO=zookeeper
 KAFKA=kafka
+TOPIC_1=foo
+TOPIC_2=bar
+TOPIC_3=c3-test
+DELIM="-------------------------------------------------------------------------------"
 
 sh run.sh
 
 docker-compose ps
-
-
-#check for zookeeper
+echo $DELIM
+echo "ZOOKEEPER"
+echo "check for zookeeper"
 while [ $(docker-compose logs zookeeper | grep -i binding | wc -l) -lt 1 ]
 do
     echo "Waiting for zookeeper to start";
 done
+echo $DELIM
 
-
-
-# check for kafka
+echo "KAFKA"
+echo "check for kafka"
 docker-compose logs kafka | grep -i started
+echo $DELIM
 
-
-#create topic in kafka
-
-docker-compose exec kafka  \
-kafka-topics --create --topic foo --partitions 1 --replication-factor 1 --if-not-exists --zookeeper $ZOO:2181
-
-
-#check if it exists
+echo "create topic in kafka"
 
 docker-compose exec kafka  \
-  kafka-topics --describe --topic foo --zookeeper $ZOO:2181
+kafka-topics --create --topic $TOPIC_1 --partitions 1 --replication-factor 1 --if-not-exists --zookeeper $ZOO:2181
+echo $DELIM
 
-#produce messages
-
-docker-compose exec kafka  \
-  bash -c "seq 42 | kafka-console-producer --request-required-acks 1 --broker-list $KAFKA:9092 --topic foo && echo 'Produced 42 messages.'"
-
-
-#consume messages
+echo "check if topic exists"
 
 docker-compose exec kafka  \
-  kafka-console-consumer --bootstrap-server $KAFKA:9092 --topic foo --from-beginning --max-messages 42
+  kafka-topics --describe --topic $TOPIC_1 --zookeeper $ZOO:2181
+echo $DELIM
 
-docker-compose down
+echo "produce messages"
+
+docker-compose exec kafka  \
+  bash -c "seq 42 | kafka-console-producer --request-required-acks 1 --broker-list $KAFKA:9092 --topic $TOPIC_1 && echo 'Produced 42 messages.'"
+echo $DELIM
+
+echo "consume messages"
+
+docker-compose exec kafka  \
+  kafka-console-consumer --bootstrap-server $KAFKA:9092 --topic $TOPIC_1 --from-beginning --max-messages 42
+echo $DELIM
+echo "SCHEMA-REGISTRY"
+echo "schema-registry check"
+
+docker-compose exec schema-registry bash -c "printf '{\"f1\": \"value1\"}\n{\"f1\": \"value2\"}\n{\"f1\": \"value3\"}\n' | /usr/bin/kafka-avro-console-producer \
+  --broker-list kafka:9092 --topic bar \
+  --property schema.registry.url=http://schema-registry:8081 \
+  --property value.schema='{\"type\":\"record\",\"name\":\"myrecord\",\"fields\":[{\"name\":\"f1\",\"type\":\"string\"}]}'"
+echo $DELIM
+echo "KAFKA-REST PROXY"
+echo "kafka rest proxy sends message"
+
+docker-compose exec kafka-rest curl -X POST -H "Content-Type: application/vnd.kafka.v1+json" \
+  --data '{"name": "my_consumer_instance", "format": "avro", "auto.offset.reset": "smallest"}' \
+  http://kafka-rest:8082/consumers/my_avro_consumer
+echo $DELIM
+
+echo "kafka rest proxy retrieve message"
+
+docker-compose exec kafka-rest curl -X GET -H "Accept: application/vnd.kafka.avro.v1+json" \
+  http://kafka-rest:8082/consumers/my_avro_consumer/instances/my_consumer_instance/topics/$TOPIC_2
+echo $DELIM
+
+echo "MONITORING"
+echo "create test topic for monitoring"
+docker-compose exec kafka \
+kafka-topics --create --topic c3-test --partitions 1 --replication-factor 1 --if-not-exists --zookeeper $ZOO:2181
+echo $DELIM
+
+echo "produce messages with kafka-connect"
+docker-compose exec kafka-connect \
+bash -c 'seq 10000 | kafka-console-producer --request-required-acks 1 --broker-list kafka:9092 --topic c3-test --producer-property interceptor.classes=io.confluent.monitoring.clients.interceptor.MonitoringProducerInterceptor --producer-property acks=1 && echo "Produced 10000 messages."'
+sleep 1;
+echo $DELIM
+
+echo "read messages"
+docker-compose exec kafka-connect \
+bash -c 'kafka-console-consumer --consumer-property group.id=qs-consumer --consumer-property interceptor.classes=io.confluent.monitoring.clients.interceptor.MonitoringConsumerInterceptor --bootstrap-server kafka:9092 --topic c3-test --offset '0' --partition 0 --max-messages=10000'
+sleep 1;
+echo $DELIM
+
+#echo "KAFKA-CONNECT"
+#echo "create topic"
+#K_OFF=quickstart-offsets
+#K_DATA=quickstart-data
+#
+#docker-compose exec kafka \
+#kafka-topics --create --topic $K_OFF --partitions 1 --replication-factor 1 --if-not-exists --zookeeper $ZOO:2181
+#
+#docker-compose exec kafka \
+#  kafka-topics --create --topic $K_DATA --partitions 1 --replication-factor 1 --if-not-exists --zookeeper $ZOO:2181
+#
+
+#docker-compose down
